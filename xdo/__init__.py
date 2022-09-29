@@ -64,9 +64,19 @@ class Xdo(object):
         display = display.encode('utf-8')
         self._xdo = _libxdo.xdo_new(display)
 
-        def _handle_x_error(evt):
+        def _handle_x_error(display, evt):
+            msg = ctypes.create_string_buffer(64)
+            _libX11.XGetErrorText(display, evt.contents.error_code, msg, 64)
             # todo: handle errors in a nicer way, eg. try getting error message
-            raise XError('Event: {}'.format(evt))
+
+            # Note: raise here will cause output to screen which cause duplicate output.
+
+            # ref: XSetErrorHandler `However, the error handler should not call any functions (directly or indirectly) on the display that will generate protocol requests or that will look for input events. The previous error handler is returned.`
+            # so we must save error here and handle it other place.
+            # maybe we can add  a decorator (check Xerror after called) to all xdo funcs.
+            # more worse the exception is ignored by python because it's from c callback. `Exception ignored on calling ctypes callback function` 
+            # so it just print not raise -> goto `Note: raise here will cause output to screen which cause duplicate output.`
+            raise XError('Error code:{}, Message:{}'.format(evt.contents.error_code, msg.value.decode()))
 
         self._error_handler = XErrorHandler(_handle_x_error)
 

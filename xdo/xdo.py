@@ -1442,5 +1442,7 @@ NULL pointer cannot be passed to this function.
 #     Display*            /* display */,
 #     XErrorEvent*        /* error_event */
 # );
-XErrorHandler = ctypes.CFUNCTYPE(c_int, POINTER(XErrorEvent))
+XErrorHandler = ctypes.CFUNCTYPE(c_int, c_void_p, POINTER(XErrorEvent))
+libX11.XGetErrorText.argtypes = (c_void_p, c_int, c_char_p, c_int)
+libX11.XFree.restype = None
 # ============================================================================
