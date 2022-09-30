@@ -7,6 +7,10 @@ from ctypes import POINTER
 
 from six.moves import range
 
+from six import with_metaclass
+from functools import wraps
+from types import FunctionType
+
 from .xdo import libX11 as _libX11
 from .xdo import libxdo as _libxdo
 from .xdo import (  # noqa
@@ -57,26 +61,43 @@ class XError(Exception):
     pass
 
 
-class Xdo(object):
+class _MetaClass(type):
+    def __new__(meta, clazz, bases, classdict):
+        newdict = {}
+        for attr_name, attr in classdict.items():
+            if isinstance(attr, FunctionType):
+                attr = _MetaClass._wrapper(attr)
+            newdict[attr_name] = attr
+        return type.__new__(meta, clazz, bases, newdict)
+
+    @staticmethod
+    def _wrapper(method):
+        @wraps(method)
+        def wrapped(*args, **kwargs):
+            _self = args[0]
+            res = method(*args, **kwargs)
+            if _self._error_event:
+                (display, evt) = _self._error_event
+                _self._error_event = None
+                msg = ctypes.create_string_buffer(256)
+                _libX11.XGetErrorText(display, evt.contents.error_code, msg, 256)
+                raise XError('XErrorEvent code:{}, message:{}'.format(evt.contents.error_code, msg.value.decode()))
+            return res
+        return wrapped
+
+class Xdo(with_metaclass(_MetaClass)):
     def __init__(self, display=None):
         if display is None:
             display = os.environ.get('DISPLAY', '')
         display = display.encode('utf-8')
         self._xdo = _libxdo.xdo_new(display)
+        self._error_event = None
 
         def _handle_x_error(display, evt):
-            msg = ctypes.create_string_buffer(64)
-            _libX11.XGetErrorText(display, evt.contents.error_code, msg, 64)
-            # todo: handle errors in a nicer way, eg. try getting error message
-
-            # Note: raise here will cause output to screen which cause duplicate output.
-
-            # ref: XSetErrorHandler `However, the error handler should not call any functions (directly or indirectly) on the display that will generate protocol requests or that will look for input events. The previous error handler is returned.`
-            # so we must save error here and handle it other place.
-            # maybe we can add  a decorator (check Xerror after called) to all xdo funcs.
-            # more worse the exception is ignored by python because it's from c callback. `Exception ignored on calling ctypes callback function` 
-            # so it just print not raise -> goto `Note: raise here will cause output to screen which cause duplicate output.`
-            raise XError('Error code:{}, Message:{}'.format(evt.contents.error_code, msg.value.decode()))
+            # Avoid console output here (it affects display). Otherwise the error will be output twice.
+            # `Raise`: Exception ignored on calling ctypes callback function
+            self._error_event = (display, evt)
+            return 0
 
         self._error_handler = XErrorHandler(_handle_x_error)
 
